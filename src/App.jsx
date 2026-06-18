@@ -289,41 +289,46 @@ function drawCellContents(ctx, poly, cell, index) {
   }
 }
 
-function chooseHandImage(images, frame, direction) {
+function chooseHandImage(images, frame, centerX) {
   if (!frame || !images) return null;
-  if (frame.phase === 'pickup') return images.catch;
   if (frame.phase === 'capturePrompt') return images.neutral;
-  if (frame.phase === 'capture') return images.catch;
-  if (frame.phase !== 'drop') return null;
 
-  if (direction === -1) {
-    return frame.activeIndex % 2 === 0 ? images.rightSoft : images.rightWide;
-  }
-  return frame.activeIndex % 2 === 0 ? images.leftSoft : images.leftWide;
+  const distanceFromCenter = centerX - VIEW_W / 2;
+  if (Math.abs(distanceFromCenter) < 72) return images.neutral;
+  if (distanceFromCenter < 0) return centerX < 360 ? images.leftWide : images.leftSoft;
+  return centerX > 640 ? images.rightWide : images.rightSoft;
 }
 
-function drawHandOverlay(ctx, geometry, activeFrame, direction, handImages) {
+function drawHandOverlay(ctx, geometry, activeFrame, handImages) {
   if (!activeFrame || activeFrame.activeIndex === null || activeFrame.activeIndex === undefined) return;
   const poly = geometry.cells[activeFrame.activeIndex];
   if (!poly) return;
 
-  const image = chooseHandImage(handImages, activeFrame, direction);
+  const center = polygonCenter(poly);
+  const image = chooseHandImage(handImages, activeFrame, center.x);
   if (!image) return;
 
-  const center = polygonCenter(poly);
   const isBottom = BOTTOM_SIDE.includes(activeFrame.activeIndex);
   const isQuan = poly.length > 4;
-  const width = isQuan ? 155 : 132;
+  const width = (isQuan ? 155 : 132) * 1.4;
   const height = width * (image.height / image.width);
-  const xOffset = activeFrame.phase === 'drop' ? (direction === -1 ? -18 : 18) : 0;
-  const yOffset = isBottom ? 38 : -34;
+  const xOffset = center.x < VIEW_W / 2 - 72 ? -18 : center.x > VIEW_W / 2 + 72 ? 18 : 0;
+  const yOffset = isBottom ? 54 : -54;
+  const drawX = center.x - width / 2 + xOffset;
+  const drawY = center.y - height / 2 + yOffset;
 
   ctx.save();
   ctx.globalAlpha = activeFrame.phase === 'capturePrompt' ? 0.68 : 0.92;
   ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
   ctx.shadowBlur = 12;
   ctx.shadowOffsetY = 7;
-  ctx.drawImage(image, center.x - width / 2 + xOffset, center.y - height / 2 + yOffset, width, height);
+  if (!isBottom) {
+    ctx.translate(center.x + xOffset, center.y + yOffset);
+    ctx.scale(1, -1);
+    ctx.drawImage(image, -width / 2, -height / 2, width, height);
+  } else {
+    ctx.drawImage(image, drawX, drawY, width, height);
+  }
   ctx.restore();
 }
 
@@ -464,7 +469,7 @@ function drawBoard(
   });
   ctx.restore();
 
-  drawHandOverlay(ctx, geometry, activeFrame, direction, handImages);
+  drawHandOverlay(ctx, geometry, activeFrame, handImages);
   drawDirectionControls(ctx, directionControls, hoverDirection);
 
   return { geometry, directionControls };
