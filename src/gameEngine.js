@@ -271,6 +271,15 @@ export function applyMove(previousState, selectedIndex, direction) {
   return { state: trace.state, ok: trace.ok, reason: trace.reason };
 }
 
+function scoreBeforeEndSweep(trace, player) {
+  const lastActionFrame = [...trace.frames].reverse().find((frame) => frame.phase !== 'finish');
+  return scoreTotal((lastActionFrame?.state ?? trace.state).scores[player]);
+}
+
+function countCaptureFrames(trace) {
+  return trace.frames.filter((frame) => frame.phase === 'capture').length;
+}
+
 export function chooseComputerMove(state) {
   if (state.winner !== null || state.currentPlayer !== COMPUTER_PLAYER) return null;
 
@@ -281,21 +290,26 @@ export function chooseComputerMove(state) {
       const before = scoreTotal(state.scores[COMPUTER_PLAYER]);
       const trace = buildMoveTrace(state, index, direction);
       if (!trace.ok) continue;
-      const after = scoreTotal(trace.state.scores[COMPUTER_PLAYER]);
-      const opponentAfter = scoreTotal(trace.state.scores[HUMAN_PLAYER]);
+      const captureScore = scoreBeforeEndSweep(trace, COMPUTER_PLAYER);
+      const opponentAfter = scoreBeforeEndSweep(trace, HUMAN_PLAYER);
       const remainingOnComputerSide = PLAYER_SIDES[COMPUTER_PLAYER].reduce(
         (sum, cellIndex) => sum + trace.state.cells[cellIndex].citizens,
         0,
       );
+      const captureDelta = captureScore - before;
+      const captureCount = countCaptureFrames(trace);
       options.push({
         direction,
         index,
-        score: (after - before) * 100 + remainingOnComputerSide - opponentAfter * 0.05,
+        endsGame: trace.state.winner !== null,
+        score: captureDelta * 100 + captureCount * 8 + remainingOnComputerSide - opponentAfter * 0.05,
       });
     }
   }
 
   if (options.length === 0) return null;
-  options.sort((a, b) => b.score - a.score || a.index - b.index || b.direction - a.direction);
-  return options[0];
+  const nonEndingOptions = options.filter((option) => !option.endsGame);
+  const pool = nonEndingOptions.length > 0 ? nonEndingOptions : options;
+  pool.sort((a, b) => b.score - a.score || a.index - b.index || b.direction - a.direction);
+  return pool[0];
 }

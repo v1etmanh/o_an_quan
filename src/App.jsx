@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCcw, Undo2 } from 'lucide-react';
+import playerAvatar from './asset/Screenshot_2026-06-18_151556-removebg-preview.png';
+import computerAvatar from './asset/Screenshot_2026-06-18_151510-removebg-preview.png';
+import hand90 from './asset/hand/90.png';
+import handCatchStone from './asset/hand/hand_catch_stone.png';
+import handLeft120 from './asset/hand/left_120.png';
+import handLeft140 from './asset/hand/left_140.png';
+import handRight30 from './asset/hand/right_30.png';
+import handRight45 from './asset/hand/right_45.png';
 import {
   BOTTOM_SIDE,
   CELL_LABELS,
@@ -20,6 +28,18 @@ import {
 
 const VIEW_W = 1000;
 const VIEW_H = 620;
+const CHARACTER_SOURCES = {
+  computer: computerAvatar,
+  player: playerAvatar,
+};
+const HAND_SOURCES = {
+  catch: handCatchStone,
+  neutral: hand90,
+  leftSoft: handLeft120,
+  leftWide: handLeft140,
+  rightSoft: handRight30,
+  rightWide: handRight45,
+};
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -27,6 +47,37 @@ function lerp(a, b, t) {
 
 function pointAt(a, b, t) {
   return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
+}
+
+function useCanvasImages(sources) {
+  const [images, setImages] = useState({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const entries = Object.entries(sources);
+    const loaded = {};
+    let remaining = entries.length;
+
+    entries.forEach(([key, src]) => {
+      const image = new Image();
+      image.onload = () => {
+        loaded[key] = image;
+        remaining -= 1;
+        if (!cancelled && remaining === 0) setImages(loaded);
+      };
+      image.onerror = () => {
+        remaining -= 1;
+        if (!cancelled && remaining === 0) setImages(loaded);
+      };
+      image.src = src;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sources]);
+
+  return images;
 }
 
 function pointInPolygon(point, polygon) {
@@ -167,54 +218,32 @@ function drawBackground(ctx) {
   ctx.restore();
 }
 
-function drawPeople(ctx) {
+function drawImageCover(ctx, image, x, y, width, height, alpha = 1) {
+  if (!image) return;
   ctx.save();
-  ctx.globalAlpha = 0.88;
-
-  ctx.fillStyle = '#10265c';
-  ctx.beginPath();
-  ctx.ellipse(500, 112, 118, 62, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#d78a4a';
-  ctx.beginPath();
-  ctx.ellipse(500, 73, 48, 42, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#14100e';
-  ctx.beginPath();
-  ctx.ellipse(500, 46, 52, 24, 0, Math.PI, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#1d120d';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(485, 78, 4, 0, Math.PI);
-  ctx.arc(515, 78, 4, 0, Math.PI);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(500, 94, 14, 0.1, Math.PI - 0.1);
-  ctx.stroke();
-
-  ctx.fillStyle = '#621a18';
-  ctx.beginPath();
-  ctx.ellipse(340, 608, 195, 82, -0.16, 0, Math.PI * 2);
-  ctx.ellipse(700, 607, 185, 78, 0.16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#b63a20';
-  ctx.beginPath();
-  ctx.ellipse(615, 536, 120, 34, 0.62, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#d88949';
-  ctx.beginPath();
-  ctx.ellipse(681, 494, 42, 25, 0.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#32120e';
-  ctx.lineWidth = 2.4;
-  for (let i = 0; i < 5; i += 1) {
-    ctx.beginPath();
-    ctx.moveTo(660 + i * 9, 486 + i * 2);
-    ctx.quadraticCurveTo(685 + i * 5, 475 + i * 7, 702 + i * 5, 498 + i * 4);
-    ctx.stroke();
-  }
+  ctx.globalAlpha = alpha;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 8;
+  ctx.drawImage(image, x, y, width, height);
   ctx.restore();
+}
+
+function drawPeople(ctx, characterImages) {
+  const computer = characterImages?.computer;
+  const player = characterImages?.player;
+
+  if (computer) {
+    const width = 300;
+    const height = width * (computer.height / computer.width);
+    drawImageCover(ctx, computer, 350, -16, width, height, 0.94);
+  }
+
+  if (player) {
+    const width = 650;
+    const height = width * (player.height / player.width);
+    drawImageCover(ctx, player, 180, 468, width, height, 0.95);
+  }
 }
 
 function drawStone(ctx, x, y, radius, color, seed, isQuan = false) {
@@ -258,6 +287,44 @@ function drawCellContents(ctx, poly, cell, index) {
     const y = center.y + Math.sin(angle) * distance * 0.55;
     drawStone(ctx, x, y, citizenRadius, '#2d6fc8', index * 200 + i);
   }
+}
+
+function chooseHandImage(images, frame, direction) {
+  if (!frame || !images) return null;
+  if (frame.phase === 'pickup') return images.catch;
+  if (frame.phase === 'capturePrompt') return images.neutral;
+  if (frame.phase === 'capture') return images.catch;
+  if (frame.phase !== 'drop') return null;
+
+  if (direction === -1) {
+    return frame.activeIndex % 2 === 0 ? images.rightSoft : images.rightWide;
+  }
+  return frame.activeIndex % 2 === 0 ? images.leftSoft : images.leftWide;
+}
+
+function drawHandOverlay(ctx, geometry, activeFrame, direction, handImages) {
+  if (!activeFrame || activeFrame.activeIndex === null || activeFrame.activeIndex === undefined) return;
+  const poly = geometry.cells[activeFrame.activeIndex];
+  if (!poly) return;
+
+  const image = chooseHandImage(handImages, activeFrame, direction);
+  if (!image) return;
+
+  const center = polygonCenter(poly);
+  const isBottom = BOTTOM_SIDE.includes(activeFrame.activeIndex);
+  const isQuan = poly.length > 4;
+  const width = isQuan ? 155 : 132;
+  const height = width * (image.height / image.width);
+  const xOffset = activeFrame.phase === 'drop' ? (direction === -1 ? -18 : 18) : 0;
+  const yOffset = isBottom ? 38 : -34;
+
+  ctx.save();
+  ctx.globalAlpha = activeFrame.phase === 'capturePrompt' ? 0.68 : 0.92;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 7;
+  ctx.drawImage(image, center.x - width / 2 + xOffset, center.y - height / 2 + yOffset, width, height);
+  ctx.restore();
 }
 
 function makeDirectionControls(geometry, selectedCell) {
@@ -311,7 +378,19 @@ function drawDirectionControls(ctx, controls, hoverDirection) {
   });
 }
 
-function drawBoard(ctx, state, hoverIndex, direction, canInteract, activeIndex, selectedCell, hoverDirection, capturePrompt) {
+function drawBoard(
+  ctx,
+  state,
+  hoverIndex,
+  direction,
+  canInteract,
+  activeIndex,
+  selectedCell,
+  hoverDirection,
+  capturePrompt,
+  activeFrame,
+  handImages,
+) {
   const geometry = makeGeometry();
   const directionControls = canInteract ? makeDirectionControls(geometry, selectedCell) : [];
 
@@ -385,6 +464,7 @@ function drawBoard(ctx, state, hoverIndex, direction, canInteract, activeIndex, 
   });
   ctx.restore();
 
+  drawHandOverlay(ctx, geometry, activeFrame, direction, handImages);
   drawDirectionControls(ctx, directionControls, hoverDirection);
 
   return { geometry, directionControls };
@@ -398,8 +478,11 @@ function GameCanvas({
   onCaptureConfirm,
   canInteract,
   activeIndex,
+  activeFrame,
   selectedCell,
   capturePrompt,
+  handImages,
+  characterImages,
 }) {
   const canvasRef = useRef(null);
   const hitRef = useRef([]);
@@ -425,7 +508,7 @@ function GameCanvas({
     ctx.save();
     ctx.scale(rect.width / VIEW_W, rect.height / VIEW_H);
     drawBackground(ctx);
-    drawPeople(ctx);
+    drawPeople(ctx, characterImages);
     const { geometry, directionControls } = drawBoard(
       ctx,
       state,
@@ -436,11 +519,25 @@ function GameCanvas({
       selectedCell,
       hoverDirection,
       capturePrompt,
+      activeFrame,
+      handImages,
     );
     hitRef.current = geometry.cells;
     arrowHitRef.current = directionControls;
     ctx.restore();
-  }, [activeIndex, canInteract, capturePrompt, direction, hoverDirection, hoverIndex, selectedCell, state]);
+  }, [
+    activeFrame,
+    activeIndex,
+    canInteract,
+    capturePrompt,
+    characterImages,
+    direction,
+    handImages,
+    hoverDirection,
+    hoverIndex,
+    selectedCell,
+    state,
+  ]);
 
   useEffect(() => {
     draw();
@@ -528,10 +625,13 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [isAnimating, setIsAnimating] = useState(false);
   const [activeIndex, setActiveIndex] = useState(null);
+  const [activeFrame, setActiveFrame] = useState(null);
   const [selectedCell, setSelectedCell] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
   const traceRunnerRef = useRef(null);
   const timersRef = useRef([]);
+  const characterImages = useCanvasImages(CHARACTER_SOURCES);
+  const handImages = useCanvasImages(HAND_SOURCES);
 
   const clearAnimationTimers = useCallback(() => {
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -546,6 +646,7 @@ export default function App() {
     traceRunnerRef.current = null;
     setPendingCapture(null);
     setActiveIndex(null);
+    setActiveFrame(null);
     setIsAnimating(false);
   }, []);
 
@@ -563,6 +664,7 @@ export default function App() {
 
       setGameState(frame.state);
       setActiveIndex(frame.activeIndex);
+      setActiveFrame(frame);
 
       if (frame.phase === 'capturePrompt') {
         const prompt = {
@@ -619,6 +721,7 @@ export default function App() {
       };
       setIsAnimating(true);
       setActiveIndex(selectedIndex);
+      setActiveFrame({ activeIndex: selectedIndex, phase: 'pickup' });
       setSelectedCell(null);
       setPendingCapture(null);
       setDirection(moveDirection);
@@ -637,6 +740,8 @@ export default function App() {
     (index) => {
       if (!canInteract || !canSelectCell(gameState, index)) return;
       setSelectedCell(index);
+      setActiveIndex(index);
+      setActiveFrame({ activeIndex: index, phase: 'pickup' });
     },
     [canInteract, gameState],
   );
@@ -687,6 +792,7 @@ export default function App() {
     setHistory([]);
     setDirection(1);
     setActiveIndex(null);
+    setActiveFrame(null);
     setSelectedCell(null);
     setPendingCapture(null);
     setIsAnimating(false);
@@ -703,6 +809,7 @@ export default function App() {
       return next;
     });
     setActiveIndex(null);
+    setActiveFrame(null);
     setSelectedCell(null);
     setPendingCapture(null);
     setIsAnimating(false);
@@ -719,8 +826,11 @@ export default function App() {
           onCaptureConfirm={handleCaptureConfirm}
           canInteract={canInteract}
           activeIndex={activeIndex}
+          activeFrame={activeFrame}
           selectedCell={selectedCell}
           capturePrompt={pendingCapture}
+          handImages={handImages}
+          characterImages={characterImages}
         />
       </section>
 

@@ -25,6 +25,9 @@ Trò chơi là một bản ô ăn quan người chơi đấu với máy, dùng R
 - Điều khiển gồm reset, undo, trạng thái lượt, điểm của bạn/máy và nhật ký lượt gần nhất.
 - Các ô hợp lệ phía người chơi được highlight. Người chơi bấm một ô dân hàng dưới, sau đó canvas hiện 2 mũi tên trái/phải cạnh ô để chọn hướng rải; máy tự chọn nước đi ở hàng trên.
 - Mỗi lượt chạy bằng animation tuần tự: bốc quân, thả từng viên vào từng ô, bốc tiếp nếu đúng luật. Khi có thế ăn, bàn dừng ở ô trống màu vàng; người chơi bấm ô đó để ăn ô kế tiếp rồi lượt mới tiếp tục.
+- Các frame thao tác dùng ảnh tay trong `src/asset/hand`: tay bốc sỏi xuất hiện khi chọn ô và khi ăn; các pose tay trái/phải xuất hiện khi rải từng viên theo hướng đã chọn.
+- Nhân vật hai phía dùng ảnh avatar nền trong suốt ở `src/asset`: bé ngồi phía trên đại diện máy, người chơi áo đỏ ở mép dưới đại diện bạn; canvas resize ảnh theo tỉ lệ gốc để giữ đúng phong cách tranh.
+- AI được cân bằng để không cố tình tận dụng điểm thu cuối ván quá sớm; máy chấm điểm theo phần ăn trực tiếp trước, rồi mới xét các yếu tố phụ.
 
 ## Responsive
 

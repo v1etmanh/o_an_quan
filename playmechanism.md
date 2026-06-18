@@ -37,7 +37,9 @@
 
 - Máy xét tất cả ô hợp lệ trên hàng trên với cả hai chiều rải.
 - Mỗi nước được mô phỏng bằng cùng engine luật của người chơi.
-- Máy ưu tiên nước ăn được nhiều điểm ngay trong lượt đó, sau đó ưu tiên giữ lại nhiều dân ở phía mình.
+- Máy ưu tiên nước ăn được nhiều điểm trực tiếp trong lượt đó, sau đó ưu tiên giữ lại nhiều dân ở phía mình.
+- Khi chấm điểm nước đi, máy không tính phần điểm thu dân cuối ván, để tránh chọn nước chỉ vì cú quét điểm sau khi hết hai quan.
+- Nếu còn nước không kết thúc ván, máy ưu tiên nhóm nước đó trước; chỉ khi không còn lựa chọn hợp lệ khác thì mới chọn nước kết thúc ván.
 - Đây là AI một lượt nhìn trước, không phải minimax nhiều tầng.
 
 ## Animation
@@ -47,6 +49,7 @@
 - Frame `drop` hiển thị từng viên được rải vào từng ô kế tiếp.
 - Frame `capturePrompt` dừng animation ở ô trống màu vàng và chờ xác nhận ăn.
 - Frame `capture` hiển thị ô vừa bị ăn sau khi xác nhận.
+- UI dùng các ảnh trong `src/asset/hand` để vẽ tay lên canvas: `hand_catch_stone.png` cho thao tác bốc/ăn, các pose `left_*`, `right_*`, `90.png` cho thao tác rải và chờ ăn.
 - Frame `finish` là trạng thái cuối cùng của lượt, sau đó mới chuyển input cho bên kế tiếp.
 - Trong lúc animation chạy, người chơi không thể chọn ô mới, chọn hướng, hoặc undo.
 
