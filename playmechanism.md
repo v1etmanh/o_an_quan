@@ -28,7 +28,8 @@
 ## Ăn quân
 
 - Nếu sau khi rải, ô kế tiếp trống và ô sau nó có quân, ô trống đó được highlight màu vàng.
-- Người chơi phải bấm vào ô trống màu vàng để ăn toàn bộ quân ở ô sau đó. Máy sẽ tự bấm sau một nhịp ngắn.
+- Người chơi có 3 giây để click liên tục vào ô trống màu vàng; mỗi click phát âm ăn lớn hơn một chút. Hết 3 giây, game mới ăn toàn bộ quân ở ô sau đó và tiếp tục lượt.
+- Máy sẽ tự bấm sau một nhịp ngắn.
 - Có thể ăn liên tiếp; sau mỗi lần ăn, nếu lại có một ô trống rồi tới một ô có quân, game tiếp tục dừng và yêu cầu bấm ô trống kế tiếp.
 - Khi ăn ô quan, người chơi nhận cả quân quan và dân nằm trong ô quan.
 - Bản game này dùng luật dễ chơi: dân nằm trong ô quan sau khi quan đã bị ăn vẫn có thể bị ăn như quân thường.
@@ -49,9 +50,9 @@
 - Frame `drop` hiển thị từng viên được rải vào từng ô kế tiếp.
 - Frame `capturePrompt` dừng animation ở ô trống màu vàng và chờ xác nhận ăn.
 - Frame `capture` hiển thị ô vừa bị ăn sau khi xác nhận.
-- UI dùng các ảnh trong `src/asset/hand` để vẽ tay lên canvas: `hand_catch_stone.png` cho thao tác bốc/ăn, các pose `left_*`, `right_*`, `90.png` cho thao tác rải và chờ ăn.
 - Frame `finish` là trạng thái cuối cùng của lượt, sau đó mới chuyển input cho bên kế tiếp.
 - Trong lúc animation chạy, người chơi không thể chọn ô mới, chọn hướng, hoặc undo.
+- Nhạc nền bắt đầu sau tương tác đầu tiên của người chơi do trình duyệt chặn autoplay trước khi có click. Mỗi frame `drop` phát âm rải đá; trong cửa sổ ăn 3 giây, mỗi click của người chơi phát âm ăn lớn dần, còn máy dùng âm ăn riêng.
 
 ## Hết quân trên phía mình
 

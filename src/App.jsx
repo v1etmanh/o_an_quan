@@ -2,12 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCcw, Undo2 } from 'lucide-react';
 import playerAvatar from './asset/Screenshot_2026-06-18_151556-removebg-preview.png';
 import computerAvatar from './asset/Screenshot_2026-06-18_151510-removebg-preview.png';
-import hand90 from './asset/hand/90.png';
-import handCatchStone from './asset/hand/hand_catch_stone.png';
-import handLeft120 from './asset/hand/left_120.png';
-import handLeft140 from './asset/hand/left_140.png';
-import handRight30 from './asset/hand/right_30.png';
-import handRight45 from './asset/hand/right_45.png';
+import enemyClickSquareSound from './asset/sound/enemy_click_square.wav';
+import musicSound from './asset/sound/music.mp3';
+import playerClickSquareSound from './asset/sound/player_click_square.wav';
+import raiDaSound from './asset/sound/rai_da.wav';
 import {
   BOTTOM_SIDE,
   CELL_LABELS,
@@ -32,13 +30,11 @@ const CHARACTER_SOURCES = {
   computer: computerAvatar,
   player: playerAvatar,
 };
-const HAND_SOURCES = {
-  catch: handCatchStone,
-  neutral: hand90,
-  leftSoft: handLeft120,
-  leftWide: handLeft140,
-  rightSoft: handRight30,
-  rightWide: handRight45,
+const SOUND_SOURCES = {
+  music: musicSound,
+  raiDa: raiDaSound,
+  playerClickSquare: playerClickSquareSound,
+  enemyClickSquare: enemyClickSquareSound,
 };
 
 function lerp(a, b, t) {
@@ -78,6 +74,70 @@ function useCanvasImages(sources) {
   }, [sources]);
 
   return images;
+}
+
+function useGameAudio() {
+  const audioRef = useRef(null);
+
+  const ensureAudio = useCallback(() => {
+    if (audioRef.current) return audioRef.current;
+
+    const music = new Audio(SOUND_SOURCES.music);
+    music.loop = true;
+    music.volume = 0.1;
+
+    const raiDa = new Audio(SOUND_SOURCES.raiDa);
+    raiDa.volume = 0.5;
+
+    const playerClickSquare = new Audio(SOUND_SOURCES.playerClickSquare);
+    playerClickSquare.volume = 0.62;
+
+    const enemyClickSquare = new Audio(SOUND_SOURCES.enemyClickSquare);
+    enemyClickSquare.volume = 0.58;
+
+    audioRef.current = {
+      music,
+      raiDa,
+      playerClickSquare,
+      enemyClickSquare,
+    };
+    return audioRef.current;
+  }, []);
+
+  const startMusic = useCallback(() => {
+    const audio = ensureAudio();
+    if (!audio.music.paused) return;
+    audio.music.play().catch(() => {});
+  }, [ensureAudio]);
+
+  const playSound = useCallback(
+    (name, options = {}) => {
+      const audio = ensureAudio()[name];
+      if (!audio) return;
+      const instance = audio.cloneNode();
+      instance.volume = options.volume ?? audio.volume;
+      instance.currentTime = 0;
+      instance.play().catch(() => {});
+      instance.addEventListener('ended', () => {
+        instance.src = '';
+      });
+    },
+    [ensureAudio],
+  );
+
+  useEffect(
+    () => () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      Object.values(audio).forEach((item) => {
+        item.pause();
+        item.src = '';
+      });
+    },
+    [],
+  );
+
+  return { startMusic, playSound };
 }
 
 function pointInPolygon(point, polygon) {
@@ -289,49 +349,6 @@ function drawCellContents(ctx, poly, cell, index) {
   }
 }
 
-function chooseHandImage(images, frame, centerX) {
-  if (!frame || !images) return null;
-  if (frame.phase === 'capturePrompt') return images.neutral;
-
-  const distanceFromCenter = centerX - VIEW_W / 2;
-  if (Math.abs(distanceFromCenter) < 72) return images.neutral;
-  if (distanceFromCenter < 0) return centerX < 360 ? images.leftWide : images.leftSoft;
-  return centerX > 640 ? images.rightWide : images.rightSoft;
-}
-
-function drawHandOverlay(ctx, geometry, activeFrame, handImages) {
-  if (!activeFrame || activeFrame.activeIndex === null || activeFrame.activeIndex === undefined) return;
-  const poly = geometry.cells[activeFrame.activeIndex];
-  if (!poly) return;
-
-  const center = polygonCenter(poly);
-  const image = chooseHandImage(handImages, activeFrame, center.x);
-  if (!image) return;
-
-  const isBottom = BOTTOM_SIDE.includes(activeFrame.activeIndex);
-  const isQuan = poly.length > 4;
-  const width = (isQuan ? 155 : 132) * 1.4;
-  const height = width * (image.height / image.width);
-  const xOffset = center.x < VIEW_W / 2 - 72 ? -18 : center.x > VIEW_W / 2 + 72 ? 18 : 0;
-  const yOffset = isBottom ? 54 : -54;
-  const drawX = center.x - width / 2 + xOffset;
-  const drawY = center.y - height / 2 + yOffset;
-
-  ctx.save();
-  ctx.globalAlpha = activeFrame.phase === 'capturePrompt' ? 0.68 : 0.92;
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 7;
-  if (!isBottom) {
-    ctx.translate(center.x + xOffset, center.y + yOffset);
-    ctx.scale(1, -1);
-    ctx.drawImage(image, -width / 2, -height / 2, width, height);
-  } else {
-    ctx.drawImage(image, drawX, drawY, width, height);
-  }
-  ctx.restore();
-}
-
 function makeDirectionControls(geometry, selectedCell) {
   if (selectedCell === null || selectedCell === undefined || !geometry.cells[selectedCell]) return [];
 
@@ -393,8 +410,6 @@ function drawBoard(
   selectedCell,
   hoverDirection,
   capturePrompt,
-  activeFrame,
-  handImages,
 ) {
   const geometry = makeGeometry();
   const directionControls = canInteract ? makeDirectionControls(geometry, selectedCell) : [];
@@ -469,7 +484,6 @@ function drawBoard(
   });
   ctx.restore();
 
-  drawHandOverlay(ctx, geometry, activeFrame, handImages);
   drawDirectionControls(ctx, directionControls, hoverDirection);
 
   return { geometry, directionControls };
@@ -483,10 +497,8 @@ function GameCanvas({
   onCaptureConfirm,
   canInteract,
   activeIndex,
-  activeFrame,
   selectedCell,
   capturePrompt,
-  handImages,
   characterImages,
 }) {
   const canvasRef = useRef(null);
@@ -524,20 +536,16 @@ function GameCanvas({
       selectedCell,
       hoverDirection,
       capturePrompt,
-      activeFrame,
-      handImages,
     );
     hitRef.current = geometry.cells;
     arrowHitRef.current = directionControls;
     ctx.restore();
   }, [
-    activeFrame,
     activeIndex,
     canInteract,
     capturePrompt,
     characterImages,
     direction,
-    handImages,
     hoverDirection,
     hoverIndex,
     selectedCell,
@@ -630,17 +638,23 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [isAnimating, setIsAnimating] = useState(false);
   const [activeIndex, setActiveIndex] = useState(null);
-  const [activeFrame, setActiveFrame] = useState(null);
   const [selectedCell, setSelectedCell] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
+  const [captureClicks, setCaptureClicks] = useState(0);
   const traceRunnerRef = useRef(null);
   const timersRef = useRef([]);
+  const captureTimerRef = useRef(null);
+  const captureClicksRef = useRef(0);
   const characterImages = useCanvasImages(CHARACTER_SOURCES);
-  const handImages = useCanvasImages(HAND_SOURCES);
+  const { startMusic, playSound } = useGameAudio();
 
   const clearAnimationTimers = useCallback(() => {
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
     timersRef.current = [];
+    if (captureTimerRef.current) {
+      window.clearTimeout(captureTimerRef.current);
+      captureTimerRef.current = null;
+    }
   }, []);
 
   const finishTrace = useCallback(() => {
@@ -650,8 +664,9 @@ export default function App() {
     }
     traceRunnerRef.current = null;
     setPendingCapture(null);
+    setCaptureClicks(0);
+    captureClicksRef.current = 0;
     setActiveIndex(null);
-    setActiveFrame(null);
     setIsAnimating(false);
   }, []);
 
@@ -669,7 +684,10 @@ export default function App() {
 
       setGameState(frame.state);
       setActiveIndex(frame.activeIndex);
-      setActiveFrame(frame);
+
+      if (frame.phase === 'drop') {
+        playSound('raiDa');
+      }
 
       if (frame.phase === 'capturePrompt') {
         const prompt = {
@@ -679,38 +697,55 @@ export default function App() {
           isComputer: runner.player === COMPUTER_PLAYER,
         };
         setPendingCapture(prompt);
+        setCaptureClicks(0);
+        captureClicksRef.current = 0;
 
         if (runner.player === COMPUTER_PLAYER) {
           const timer = window.setTimeout(() => {
+            playSound('enemyClickSquare');
             setPendingCapture(null);
+            setCaptureClicks(0);
+            captureClicksRef.current = 0;
             setIsAnimating(true);
             advanceTrace(prompt.nextFrameIndex);
           }, 520);
           timersRef.current.push(timer);
         } else {
+          captureTimerRef.current = window.setTimeout(() => {
+            captureTimerRef.current = null;
+            const clickCount = captureClicksRef.current;
+            playSound('playerClickSquare', { volume: Math.min(1, 0.28 + clickCount * 0.12) });
+            setPendingCapture(null);
+            setCaptureClicks(0);
+            captureClicksRef.current = 0;
+            setIsAnimating(true);
+            advanceTrace(prompt.nextFrameIndex);
+          }, 3000);
           setIsAnimating(false);
         }
         return;
       }
 
       setPendingCapture(null);
+      setCaptureClicks(0);
+      captureClicksRef.current = 0;
       setIsAnimating(true);
       const timer = window.setTimeout(() => advanceTrace(frameIndex + 1), 230);
       timersRef.current.push(timer);
     },
-    [clearAnimationTimers, finishTrace],
+    [clearAnimationTimers, finishTrace, playSound],
   );
 
   const statusText = useMemo(() => {
     if (gameState.winner === 'draw') return 'Ván hòa';
     if (gameState.winner !== null) return `${PLAYER_NAMES[gameState.winner]} thắng`;
-    if (pendingCapture && !pendingCapture.isComputer) return 'Bấm ô trống để ăn';
+    if (pendingCapture && !pendingCapture.isComputer) return `Click ô ăn trong 3 giây (${captureClicks})`;
     if (pendingCapture?.isComputer) return 'Máy đang chọn ô ăn';
     if (isAnimating) return gameState.currentPlayer === COMPUTER_PLAYER ? 'Máy đang rải quân' : 'Đang rải quân';
     if (gameState.currentPlayer === COMPUTER_PLAYER) return 'Máy đang nghĩ';
     if (selectedCell !== null) return 'Chọn hướng rải';
     return 'Tới lượt bạn';
-  }, [gameState.currentPlayer, gameState.winner, isAnimating, pendingCapture, selectedCell]);
+  }, [captureClicks, gameState.currentPlayer, gameState.winner, isAnimating, pendingCapture, selectedCell]);
 
   const canInteract = gameState.currentPlayer === HUMAN_PLAYER && gameState.winner === null && !isAnimating && !pendingCapture;
 
@@ -726,7 +761,6 @@ export default function App() {
       };
       setIsAnimating(true);
       setActiveIndex(selectedIndex);
-      setActiveFrame({ activeIndex: selectedIndex, phase: 'pickup' });
       setSelectedCell(null);
       setPendingCapture(null);
       setDirection(moveDirection);
@@ -744,29 +778,33 @@ export default function App() {
   const handleCellSelect = useCallback(
     (index) => {
       if (!canInteract || !canSelectCell(gameState, index)) return;
+      startMusic();
       setSelectedCell(index);
       setActiveIndex(index);
-      setActiveFrame({ activeIndex: index, phase: 'pickup' });
     },
-    [canInteract, gameState],
+    [canInteract, gameState, startMusic],
   );
 
   const handleDirectionSelect = useCallback(
     (moveDirection) => {
       if (!canInteract || selectedCell === null || !canSelectCell(gameState, selectedCell)) return;
+      startMusic();
       playTrace(gameState, selectedCell, moveDirection);
     },
-    [canInteract, gameState, playTrace, selectedCell],
+    [canInteract, gameState, playTrace, selectedCell, startMusic],
   );
 
   const handleCaptureConfirm = useCallback(
     (index) => {
       if (!pendingCapture || pendingCapture.isComputer || index !== pendingCapture.emptyIndex) return;
-      setPendingCapture(null);
-      setIsAnimating(true);
-      advanceTrace(pendingCapture.nextFrameIndex);
+      startMusic();
+      setCaptureClicks((count) => {
+        const nextCount = count + 1;
+        playSound('playerClickSquare', { volume: Math.min(1, 0.32 + nextCount * 0.12) });
+        return nextCount;
+      });
     },
-    [advanceTrace, pendingCapture],
+    [pendingCapture, playSound, startMusic],
   );
 
   useEffect(() => {
@@ -791,17 +829,18 @@ export default function App() {
   );
 
   const resetGame = useCallback(() => {
+    startMusic();
     clearAnimationTimers();
     traceRunnerRef.current = null;
     setGameState(createInitialState());
     setHistory([]);
     setDirection(1);
     setActiveIndex(null);
-    setActiveFrame(null);
     setSelectedCell(null);
     setPendingCapture(null);
+    setCaptureClicks(0);
     setIsAnimating(false);
-  }, [clearAnimationTimers]);
+  }, [clearAnimationTimers, startMusic]);
 
   const undoMove = useCallback(() => {
     clearAnimationTimers();
@@ -814,9 +853,9 @@ export default function App() {
       return next;
     });
     setActiveIndex(null);
-    setActiveFrame(null);
     setSelectedCell(null);
     setPendingCapture(null);
+    setCaptureClicks(0);
     setIsAnimating(false);
   }, [clearAnimationTimers]);
 
@@ -831,10 +870,8 @@ export default function App() {
           onCaptureConfirm={handleCaptureConfirm}
           canInteract={canInteract}
           activeIndex={activeIndex}
-          activeFrame={activeFrame}
           selectedCell={selectedCell}
           capturePrompt={pendingCapture}
-          handImages={handImages}
           characterImages={characterImages}
         />
       </section>
@@ -853,7 +890,7 @@ export default function App() {
         <section className="rules-card">
           <h2>Cách đi</h2>
           <p>Bạn chơi hàng dưới. Bấm một ô dân đang sáng, rồi chọn mũi tên trái hoặc phải hiện trên bàn để rải quân.</p>
-          <p>Khi có thế ăn, bấm ô trống màu vàng để ăn ô kế tiếp. Quan = {MANDARIN_VALUE} dân; hết hai quan thì chốt điểm.</p>
+          <p>Khi có thế ăn, click ô trống màu vàng trong 3 giây; click càng nhiều tiếng ăn càng vang. Quan = {MANDARIN_VALUE} dân.</p>
         </section>
 
         <section className="log-card">

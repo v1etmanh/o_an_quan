@@ -52,7 +52,7 @@ button {
 }
 
 .game-canvas.locked {
-  cursor: wait;
+  cursor: default;
 }
 
 .control-panel {
