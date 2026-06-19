@@ -25,7 +25,10 @@ import {
 } from './gameEngine.js';
 
 const VIEW_W = 1000;
-const VIEW_H = 620;
+const VIEW_H = 760;
+const SCENE_Y_OFFSET = 108;
+const SKY_H = 322;
+const SKY_BOUNDS = { x: 70, y: 18, width: 860, height: 172 };
 const CHARACTER_SOURCES = {
   computer: computerAvatar,
   player: playerAvatar,
@@ -43,6 +46,18 @@ function lerp(a, b, t) {
 
 function pointAt(a, b, t) {
   return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+
+function makeEffectId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function useCanvasImages(sources) {
@@ -179,6 +194,10 @@ function scalePolygon(poly, amount) {
   }));
 }
 
+function shiftPoint(point, dx = 0, dy = 0) {
+  return { x: point.x + dx, y: point.y + dy };
+}
+
 function drawPolygon(ctx, points) {
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
@@ -239,33 +258,64 @@ function makeGeometry() {
       bottomLeft,
       { x: 112, y: 380 },
       { x: 142, y: 288 },
-    ],
-    cells,
+    ].map((point) => shiftPoint(point, 0, SCENE_Y_OFFSET)),
+    cells: cells.map((poly) => poly?.map((point) => shiftPoint(point, 0, SCENE_Y_OFFSET))),
   };
 }
 
-function drawBackground(ctx) {
-  const gradient = ctx.createLinearGradient(0, 0, VIEW_W, VIEW_H);
-  gradient.addColorStop(0, '#2f2118');
-  gradient.addColorStop(0.38, '#8a542d');
-  gradient.addColorStop(1, '#3b241a');
+function drawBackground(ctx, now = 0) {
+  const gradient = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+  gradient.addColorStop(0, '#071226');
+  gradient.addColorStop(0.35, '#122643');
+  gradient.addColorStop(0.55, '#3d291d');
+  gradient.addColorStop(1, '#271710');
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
   ctx.save();
-  ctx.globalAlpha = 0.32;
+  ctx.globalAlpha = 0.9;
+  for (let i = 0; i < 120; i += 1) {
+    const x = hashNoise(i + 901) * VIEW_W;
+    const y = 8 + hashNoise(i + 127) * (SKY_H - 30);
+    const twinkle = 0.45 + hashNoise(i + 23) * 0.35 + Math.sin(now * 0.0014 + i) * 0.18;
+    const radius = 0.7 + hashNoise(i + 61) * 1.35;
+    ctx.fillStyle = `rgba(232, 244, 255, ${clamp(twinkle, 0.2, 0.92)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const moonGradient = ctx.createRadialGradient(845, 62, 8, 845, 62, 44);
+  moonGradient.addColorStop(0, 'rgba(255, 249, 219, 0.9)');
+  moonGradient.addColorStop(0.52, 'rgba(255, 230, 154, 0.24)');
+  moonGradient.addColorStop(1, 'rgba(255, 230, 154, 0)');
+  ctx.fillStyle = moonGradient;
+  ctx.beginPath();
+  ctx.arc(845, 62, 44, 0, Math.PI * 2);
+  ctx.fill();
+
+  const horizon = ctx.createLinearGradient(0, SKY_H - 34, 0, SKY_H + 34);
+  horizon.addColorStop(0, 'rgba(76, 138, 187, 0)');
+  horizon.addColorStop(0.45, 'rgba(251, 184, 91, 0.18)');
+  horizon.addColorStop(1, 'rgba(40, 20, 12, 0)');
+  ctx.fillStyle = horizon;
+  ctx.fillRect(0, SKY_H - 34, VIEW_W, 68);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = 0.3;
   for (let i = -2; i < 9; i += 1) {
     const x = i * 145 + 18;
     ctx.strokeStyle = i % 2 === 0 ? '#160f0a' : '#c78345';
     ctx.lineWidth = i % 2 === 0 ? 2 : 1;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
+    ctx.moveTo(x, SKY_H - 18);
     ctx.lineTo(x + 58, VIEW_H);
     ctx.stroke();
   }
 
   for (let i = 0; i < 95; i += 1) {
-    const y = hashNoise(i + 3) * VIEW_H;
+    const y = SKY_H + hashNoise(i + 3) * (VIEW_H - SKY_H);
     const x = hashNoise(i + 99) * VIEW_W;
     const len = 35 + hashNoise(i + 37) * 120;
     ctx.strokeStyle = i % 3 === 0 ? '#d49355' : '#1f1510';
@@ -276,6 +326,191 @@ function drawBackground(ctx) {
     ctx.stroke();
   }
   ctx.restore();
+}
+
+function constellationPointsFromMove(lastMove, seed) {
+  if (!lastMove?.visited?.length) return [];
+  const geometry = makeGeometry();
+  const centers = lastMove.visited.map((index) => polygonCenter(geometry.cells[index])).filter(Boolean);
+  if (centers.length < 2) return centers;
+
+  const minX = Math.min(...centers.map((point) => point.x));
+  const maxX = Math.max(...centers.map((point) => point.x));
+  const minY = Math.min(...centers.map((point) => point.y));
+  const maxY = Math.max(...centers.map((point) => point.y));
+  const sourceW = Math.max(1, maxX - minX);
+  const sourceH = Math.max(1, maxY - minY);
+  const fit = Math.min(SKY_BOUNDS.width / sourceW, SKY_BOUNDS.height / sourceH) * (0.52 + hashNoise(seed + 7) * 0.22);
+  const angle = (hashNoise(seed + 11) - 0.5) * 0.78;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const skyCx = SKY_BOUNDS.x + SKY_BOUNDS.width * (0.28 + hashNoise(seed + 17) * 0.44);
+  const skyCy = SKY_BOUNDS.y + SKY_BOUNDS.height * (0.28 + hashNoise(seed + 29) * 0.42);
+
+  return centers.map((point, index) => {
+    const dx = (point.x - cx) * fit;
+    const dy = (point.y - cy) * fit;
+    const jitterX = (hashNoise(seed + index * 13) - 0.5) * 16;
+    const jitterY = (hashNoise(seed + index * 19) - 0.5) * 12;
+    return {
+      x: clamp(skyCx + dx * cos - dy * sin + jitterX, SKY_BOUNDS.x, SKY_BOUNDS.x + SKY_BOUNDS.width),
+      y: clamp(skyCy + dx * sin + dy * cos + jitterY, SKY_BOUNDS.y, SKY_BOUNDS.y + SKY_BOUNDS.height),
+    };
+  });
+}
+
+function drawSkyConstellation(ctx, lastMove, skyMove, now) {
+  if (!skyMove || !lastMove?.visited?.length) return;
+
+  const points = constellationPointsFromMove(lastMove, skyMove.seed);
+  if (points.length === 0) return;
+
+  const age = now - skyMove.startedAt;
+  const fadeAge = skyMove.completedAt ? now - skyMove.completedAt : 0;
+  const alpha = skyMove.completedAt ? clamp(1 - fadeAge / 2600, 0, 1) : clamp(age / 420, 0.2, 1);
+  if (alpha <= 0) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = 'rgba(146, 211, 255, 0.72)';
+  ctx.shadowBlur = 16;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const from = points[i - 1];
+    const to = points[i];
+    const lineGlow = alpha * clamp((age - i * 52) / 260, 0, 1);
+    if (lineGlow <= 0) continue;
+    ctx.strokeStyle = `rgba(158, 218, 255, ${0.22 * lineGlow})`;
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 247, 191, ${0.76 * lineGlow})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  }
+
+  points.forEach((point, index) => {
+    const pointAlpha = alpha * clamp((age - index * 42) / 220, 0, 1);
+    if (pointAlpha <= 0) return;
+    const pulse = 1 + Math.sin(now * 0.006 + index) * 0.18;
+    ctx.fillStyle = `rgba(255, 248, 205, ${pointAlpha})`;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, (2.8 + hashNoise(skyMove.seed + index) * 2.2) * pulse, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function fireworkSkyPoint(effect) {
+  const geometry = makeGeometry();
+  const empty = geometry.cells[effect.emptyIndex] ? polygonCenter(geometry.cells[effect.emptyIndex]) : { x: VIEW_W / 2, y: 330 };
+  const target = geometry.cells[effect.targetIndex] ? polygonCenter(geometry.cells[effect.targetIndex]) : empty;
+  const boardX = (empty.x + target.x) / 2;
+  const normalized = clamp((boardX - 120) / 760, 0, 1);
+  return {
+    x: SKY_BOUNDS.x + normalized * SKY_BOUNDS.width + (hashNoise(effect.seed + 5) - 0.5) * 46,
+    y: SKY_BOUNDS.y + SKY_BOUNDS.height * (0.34 + hashNoise(effect.seed + 9) * 0.38),
+  };
+}
+
+function drawFireworkCharge(ctx, charge, now) {
+  if (!charge) return;
+  const point = fireworkSkyPoint(charge);
+  const age = now - charge.startedAt;
+  const clicks = Math.max(0, charge.clicks);
+  const build = clamp(age / 3000, 0, 1);
+  const ringProgress = clamp((clicks * 0.13 + build * 0.5), 0, 0.96);
+  const visibleSparks = Math.floor(10 + clicks * 5 + build * 12);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.shadowColor = 'rgba(255, 201, 101, 0.8)';
+  ctx.shadowBlur = 18;
+
+  ctx.strokeStyle = `rgba(255, 213, 128, ${0.2 + ringProgress * 0.44})`;
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 18 + clicks * 3.2 + build * 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ringProgress);
+  ctx.stroke();
+
+  for (let i = 0; i < visibleSparks; i += 1) {
+    const angle = Math.PI * 2 * hashNoise(charge.seed + i * 31);
+    const distance = 8 + hashNoise(charge.seed + i * 17) * (26 + clicks * 4);
+    const flicker = 0.45 + Math.sin(now * 0.012 + i) * 0.28;
+    ctx.fillStyle = `rgba(255, ${190 + Math.floor(hashNoise(i + 5) * 55)}, ${90 + Math.floor(hashNoise(i + 8) * 80)}, ${clamp(flicker, 0.12, 0.8)})`;
+    ctx.beginPath();
+    ctx.arc(point.x + Math.cos(angle) * distance, point.y + Math.sin(angle) * distance, 1.6 + hashNoise(i) * 1.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = 'rgba(255, 245, 205, 0.86)';
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 3.4 + clicks * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFireworkBurst(ctx, burst, now) {
+  const age = now - burst.startedAt;
+  if (age < 0 || age > 1800) return;
+
+  const point = fireworkSkyPoint(burst);
+  const t = clamp(age / 1800, 0, 1);
+  const alpha = 1 - t;
+  const bloom = easeOutCubic(t);
+  const clicks = Math.max(1, burst.clicks);
+  const sparkCount = Math.min(96, 26 + clicks * 7);
+  const radius = 32 + bloom * (62 + clicks * 7);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = 'rgba(255, 223, 142, 0.9)';
+  ctx.shadowBlur = 22;
+
+  for (let i = 0; i < sparkCount; i += 1) {
+    const angle = (Math.PI * 2 * i) / sparkCount + (hashNoise(burst.seed + i) - 0.5) * 0.22;
+    const length = radius * (0.55 + hashNoise(burst.seed + i * 9) * 0.58);
+    const inner = Math.max(6, length - 18 - clicks * 1.5);
+    const x1 = point.x + Math.cos(angle) * inner;
+    const y1 = point.y + Math.sin(angle) * inner;
+    const x2 = point.x + Math.cos(angle) * length;
+    const y2 = point.y + Math.sin(angle) * length;
+    ctx.strokeStyle = i % 3 === 0 ? `rgba(142, 201, 255, ${alpha})` : `rgba(255, 210, 118, ${alpha})`;
+    ctx.lineWidth = 1.2 + hashNoise(i + 4) * 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = `rgba(255, 246, 196, ${0.42 * alpha})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius * 0.72, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSkyEffects(ctx, state, skyEffects, now) {
+  drawSkyConstellation(ctx, state.lastMove, skyEffects.move, now);
+  skyEffects.bursts.forEach((burst) => drawFireworkBurst(ctx, burst, now));
+  drawFireworkCharge(ctx, skyEffects.charge, now);
+}
+
+function hasActiveSkyEffects(skyEffects, now) {
+  if (skyEffects.charge) return true;
+  if (skyEffects.move && (!skyEffects.move.completedAt || now - skyEffects.move.completedAt < 2600)) return true;
+  return skyEffects.bursts.some((burst) => now - burst.startedAt < 1800);
 }
 
 function drawImageCover(ctx, image, x, y, width, height, alpha = 1) {
@@ -296,13 +531,13 @@ function drawPeople(ctx, characterImages) {
   if (computer) {
     const width = 300;
     const height = width * (computer.height / computer.width);
-    drawImageCover(ctx, computer, 350, -16, width, height, 0.94);
+    drawImageCover(ctx, computer, 350, -16 + SCENE_Y_OFFSET, width, height, 0.94);
   }
 
   if (player) {
     const width = 650;
     const height = width * (player.height / player.width);
-    drawImageCover(ctx, player, 180, 468, width, height, 0.95);
+    drawImageCover(ctx, player, 180, 468 + SCENE_Y_OFFSET, width, height, 0.95);
   }
 }
 
@@ -500,6 +735,7 @@ function GameCanvas({
   selectedCell,
   capturePrompt,
   characterImages,
+  skyEffects,
 }) {
   const canvasRef = useRef(null);
   const hitRef = useRef([]);
@@ -507,7 +743,7 @@ function GameCanvas({
   const [hoverIndex, setHoverIndex] = useState(null);
   const [hoverDirection, setHoverDirection] = useState(null);
 
-  const draw = useCallback(() => {
+  const draw = useCallback((now = performance.now()) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -524,7 +760,8 @@ function GameCanvas({
     ctx.clearRect(0, 0, rect.width, rect.height);
     ctx.save();
     ctx.scale(rect.width / VIEW_W, rect.height / VIEW_H);
-    drawBackground(ctx);
+    drawBackground(ctx, now);
+    drawSkyEffects(ctx, state, skyEffects, now);
     drawPeople(ctx, characterImages);
     const { geometry, directionControls } = drawBoard(
       ctx,
@@ -549,14 +786,32 @@ function GameCanvas({
     hoverDirection,
     hoverIndex,
     selectedCell,
+    skyEffects,
     state,
   ]);
 
   useEffect(() => {
-    draw();
-    window.addEventListener('resize', draw);
-    return () => window.removeEventListener('resize', draw);
-  }, [draw]);
+    let animationFrame = 0;
+    let cancelled = false;
+
+    const tick = () => {
+      const now = performance.now();
+      draw(now);
+      if (!cancelled && hasActiveSkyEffects(skyEffects, now)) {
+        animationFrame = window.requestAnimationFrame(tick);
+      }
+    };
+
+    const handleResize = () => draw(performance.now());
+
+    tick();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [draw, skyEffects]);
 
   const eventToPoint = useCallback((event) => {
     const canvas = canvasRef.current;
@@ -641,12 +896,90 @@ export default function App() {
   const [selectedCell, setSelectedCell] = useState(null);
   const [pendingCapture, setPendingCapture] = useState(null);
   const [captureClicks, setCaptureClicks] = useState(0);
+  const [skyEffects, setSkyEffects] = useState({ move: null, charge: null, bursts: [] });
   const traceRunnerRef = useRef(null);
   const timersRef = useRef([]);
   const captureTimerRef = useRef(null);
   const captureClicksRef = useRef(0);
   const characterImages = useCanvasImages(CHARACTER_SOURCES);
   const { startMusic, playSound } = useGameAudio();
+
+  const startSkyMove = useCallback(() => {
+    setSkyEffects((effects) => ({
+      ...effects,
+      move: {
+        seed: Math.random() * 10000,
+        startedAt: performance.now(),
+        completedAt: null,
+      },
+    }));
+  }, []);
+
+  const completeSkyMove = useCallback(() => {
+    setSkyEffects((effects) => {
+      if (!effects.move || effects.move.completedAt) return { ...effects, charge: null };
+      return {
+        ...effects,
+        charge: null,
+        move: {
+          ...effects.move,
+          completedAt: performance.now(),
+        },
+      };
+    });
+  }, []);
+
+  const startCaptureCharge = useCallback((prompt) => {
+    const now = performance.now();
+    setSkyEffects((effects) => ({
+      ...effects,
+      charge: {
+        id: makeEffectId(),
+        seed: Math.random() * 10000,
+        startedAt: now,
+        clicks: 0,
+        emptyIndex: prompt.emptyIndex,
+        targetIndex: prompt.targetIndex,
+      },
+      bursts: effects.bursts.filter((burst) => now - burst.startedAt < 1900),
+    }));
+  }, []);
+
+  const updateCaptureCharge = useCallback((clicks) => {
+    setSkyEffects((effects) => {
+      if (!effects.charge) return effects;
+      return {
+        ...effects,
+        charge: {
+          ...effects.charge,
+          clicks,
+        },
+      };
+    });
+  }, []);
+
+  const burstCaptureCharge = useCallback((clicks) => {
+    const now = performance.now();
+    setSkyEffects((effects) => {
+      if (!effects.charge) return effects;
+      return {
+        ...effects,
+        charge: null,
+        bursts: [
+          ...effects.bursts.filter((burst) => now - burst.startedAt < 1900),
+          {
+            ...effects.charge,
+            startedAt: now,
+            clicks: Math.max(clicks, effects.charge.clicks, 1),
+          },
+        ],
+      };
+    });
+  }, []);
+
+  const clearSkyEffects = useCallback(() => {
+    setSkyEffects({ move: null, charge: null, bursts: [] });
+  }, []);
 
   const clearAnimationTimers = useCallback(() => {
     timersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -668,7 +1001,8 @@ export default function App() {
     captureClicksRef.current = 0;
     setActiveIndex(null);
     setIsAnimating(false);
-  }, []);
+    completeSkyMove();
+  }, [completeSkyMove]);
 
   const advanceTrace = useCallback(
     (frameIndex) => {
@@ -711,10 +1045,12 @@ export default function App() {
           }, 520);
           timersRef.current.push(timer);
         } else {
+          startCaptureCharge(prompt);
           captureTimerRef.current = window.setTimeout(() => {
             captureTimerRef.current = null;
             const clickCount = captureClicksRef.current;
             playSound('playerClickSquare', { volume: Math.min(1, 0.28 + clickCount * 0.12) });
+            burstCaptureCharge(clickCount);
             setPendingCapture(null);
             setCaptureClicks(0);
             captureClicksRef.current = 0;
@@ -733,7 +1069,7 @@ export default function App() {
       const timer = window.setTimeout(() => advanceTrace(frameIndex + 1), 230);
       timersRef.current.push(timer);
     },
-    [clearAnimationTimers, finishTrace, playSound],
+    [burstCaptureCharge, clearAnimationTimers, finishTrace, playSound, startCaptureCharge],
   );
 
   const statusText = useMemo(() => {
@@ -764,6 +1100,7 @@ export default function App() {
       setSelectedCell(null);
       setPendingCapture(null);
       setDirection(moveDirection);
+      startSkyMove();
       if (saveHistory) {
         setHistory((items) => [...items, cloneState(baseState)]);
       }
@@ -772,7 +1109,7 @@ export default function App() {
 
       return true;
     },
-    [advanceTrace, clearAnimationTimers],
+    [advanceTrace, clearAnimationTimers, startSkyMove],
   );
 
   const handleCellSelect = useCallback(
@@ -800,11 +1137,13 @@ export default function App() {
       startMusic();
       setCaptureClicks((count) => {
         const nextCount = count + 1;
+        captureClicksRef.current = nextCount;
+        updateCaptureCharge(nextCount);
         playSound('playerClickSquare', { volume: Math.min(1, 0.32 + nextCount * 0.12) });
         return nextCount;
       });
     },
-    [pendingCapture, playSound, startMusic],
+    [pendingCapture, playSound, startMusic, updateCaptureCharge],
   );
 
   useEffect(() => {
@@ -839,8 +1178,10 @@ export default function App() {
     setSelectedCell(null);
     setPendingCapture(null);
     setCaptureClicks(0);
+    captureClicksRef.current = 0;
+    clearSkyEffects();
     setIsAnimating(false);
-  }, [clearAnimationTimers, startMusic]);
+  }, [clearAnimationTimers, clearSkyEffects, startMusic]);
 
   const undoMove = useCallback(() => {
     clearAnimationTimers();
@@ -856,8 +1197,10 @@ export default function App() {
     setSelectedCell(null);
     setPendingCapture(null);
     setCaptureClicks(0);
+    captureClicksRef.current = 0;
+    clearSkyEffects();
     setIsAnimating(false);
-  }, [clearAnimationTimers]);
+  }, [clearAnimationTimers, clearSkyEffects]);
 
   return (
     <main className="app-shell">
@@ -873,6 +1216,7 @@ export default function App() {
           selectedCell={selectedCell}
           capturePrompt={pendingCapture}
           characterImages={characterImages}
+          skyEffects={skyEffects}
         />
       </section>
 

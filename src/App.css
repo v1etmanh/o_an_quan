@@ -26,9 +26,9 @@ button {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 20px;
-  padding: 20px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+  padding: 10px;
   background:
     radial-gradient(circle at 26% 8%, rgba(255, 188, 104, 0.18), transparent 28%),
     linear-gradient(135deg, #211710 0%, #4c2d1d 42%, #131216 100%);
@@ -41,8 +41,9 @@ button {
 }
 
 .game-canvas {
-  width: min(100%, 1120px);
-  aspect-ratio: 16 / 10;
+  width: min(100%, 1440px);
+  max-height: calc(100vh - 20px);
+  aspect-ratio: 25 / 19;
   display: block;
   border: 1px solid rgba(255, 231, 189, 0.18);
   border-radius: 8px;
