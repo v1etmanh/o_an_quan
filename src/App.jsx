@@ -887,6 +887,36 @@ function ScoreBlock({ title, score, active }) {
   );
 }
 
+const DIFFICULTY_LABELS = { easy: 'Dễ', medium: 'Trung bình', hard: 'Khó' };
+const DIFFICULTY_DESCS = {
+  easy: 'AI nhìn 1 lượt trước',
+  medium: 'Minimax 3 tầng',
+  hard: 'Minimax 5 tầng, rất khó thắng',
+};
+
+function DifficultySelector({ value, onChange, disabled }) {
+  return (
+    <section className="difficulty-card">
+      <h2>Độ khó AI</h2>
+      <div className="difficulty-row">
+        {['easy', 'medium', 'hard'].map((level) => (
+          <button
+            key={level}
+            type="button"
+            className={`diff-btn diff-btn--${level} ${value === level ? 'active' : ''}`}
+            onClick={() => onChange(level)}
+            disabled={disabled}
+            title={DIFFICULTY_DESCS[level]}
+          >
+            {DIFFICULTY_LABELS[level]}
+          </button>
+        ))}
+      </div>
+      <p className="difficulty-desc">{DIFFICULTY_DESCS[value]}</p>
+    </section>
+  );
+}
+
 export default function App() {
   const [gameState, setGameState] = useState(() => createInitialState());
   const [direction, setDirection] = useState(1);
@@ -897,6 +927,8 @@ export default function App() {
   const [pendingCapture, setPendingCapture] = useState(null);
   const [captureClicks, setCaptureClicks] = useState(0);
   const [skyEffects, setSkyEffects] = useState({ move: null, charge: null, bursts: [] });
+  const [difficulty, setDifficulty] = useState('easy');
+  const [computerThinking, setComputerThinking] = useState(false);
   const traceRunnerRef = useRef(null);
   const timersRef = useRef([]);
   const captureTimerRef = useRef(null);
@@ -1078,10 +1110,11 @@ export default function App() {
     if (pendingCapture && !pendingCapture.isComputer) return `Click ô ăn trong 3 giây (${captureClicks})`;
     if (pendingCapture?.isComputer) return 'Máy đang chọn ô ăn';
     if (isAnimating) return gameState.currentPlayer === COMPUTER_PLAYER ? 'Máy đang rải quân' : 'Đang rải quân';
+    if (computerThinking) return 'Đến lượt máy...';
     if (gameState.currentPlayer === COMPUTER_PLAYER) return 'Máy đang nghĩ';
     if (selectedCell !== null) return 'Chọn hướng rải';
     return 'Tới lượt bạn';
-  }, [captureClicks, gameState.currentPlayer, gameState.winner, isAnimating, pendingCapture, selectedCell]);
+  }, [captureClicks, computerThinking, gameState.currentPlayer, gameState.winner, isAnimating, pendingCapture, selectedCell]);
 
   const canInteract = gameState.currentPlayer === HUMAN_PLAYER && gameState.winner === null && !isAnimating && !pendingCapture;
 
@@ -1147,17 +1180,18 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (isAnimating || gameState.winner !== null || gameState.currentPlayer !== COMPUTER_PLAYER) return undefined;
-
+    if (isAnimating || gameState.winner !== null || gameState.currentPlayer !== COMPUTER_PLAYER) {
+      setComputerThinking(false);
+      return undefined;
+    }
+    setComputerThinking(true);
     const timer = window.setTimeout(() => {
-      const move = chooseComputerMove(gameState);
-      if (move) {
-        playTrace(gameState, move.index, move.direction);
-      }
-    }, 650);
-
-    return () => window.clearTimeout(timer);
-  }, [gameState, isAnimating, playTrace]);
+      setComputerThinking(false);
+      const move = chooseComputerMove(gameState, difficulty);
+      if (move) playTrace(gameState, move.index, move.direction);
+    }, 3000);
+    return () => { window.clearTimeout(timer); setComputerThinking(false); };
+  }, [gameState, isAnimating, playTrace, difficulty]);
 
   useEffect(
     () => () => {
@@ -1165,6 +1199,28 @@ export default function App() {
       traceRunnerRef.current = null;
     },
     [clearAnimationTimers],
+  );
+
+  const handleDifficultyChange = useCallback(
+    (level) => {
+      if (isAnimating) return;
+      setDifficulty(level);
+      // Reset game so the new difficulty applies from the start
+      startMusic();
+      clearAnimationTimers();
+      traceRunnerRef.current = null;
+      setGameState(createInitialState());
+      setHistory([]);
+      setDirection(1);
+      setActiveIndex(null);
+      setSelectedCell(null);
+      setPendingCapture(null);
+      setCaptureClicks(0);
+      captureClicksRef.current = 0;
+      clearSkyEffects();
+      setIsAnimating(false);
+    },
+    [clearAnimationTimers, clearSkyEffects, isAnimating, startMusic],
   );
 
   const resetGame = useCallback(() => {
@@ -1230,6 +1286,12 @@ export default function App() {
           <ScoreBlock title="Máy" score={gameState.scores[PLAYER_TOP]} active={gameState.currentPlayer === PLAYER_TOP && gameState.winner === null} />
           <ScoreBlock title="Bạn" score={gameState.scores[HUMAN_PLAYER]} active={gameState.currentPlayer === HUMAN_PLAYER && gameState.winner === null} />
         </div>
+
+        <DifficultySelector
+          value={difficulty}
+          onChange={handleDifficultyChange}
+          disabled={isAnimating}
+        />
 
         <section className="rules-card">
           <h2>Cách đi</h2>

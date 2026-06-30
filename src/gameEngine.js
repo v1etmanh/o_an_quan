@@ -271,6 +271,8 @@ export function applyMove(previousState, selectedIndex, direction) {
   return { state: trace.state, ok: trace.ok, reason: trace.reason };
 }
 
+// ─── AI helpers ────────────────────────────────────────────────────────────
+
 function scoreBeforeEndSweep(trace, player) {
   const lastActionFrame = [...trace.frames].reverse().find((frame) => frame.phase !== 'finish');
   return scoreTotal((lastActionFrame?.state ?? trace.state).scores[player]);
@@ -280,36 +282,179 @@ function countCaptureFrames(trace) {
   return trace.frames.filter((frame) => frame.phase === 'capture').length;
 }
 
-export function chooseComputerMove(state) {
-  if (state.winner !== null || state.currentPlayer !== COMPUTER_PLAYER) return null;
-
-  const options = [];
-  for (const index of PLAYER_SIDES[COMPUTER_PLAYER]) {
+/** Enumerate all legal moves for `player` in `state`. */
+function getLegalMoves(state, player) {
+  const moves = [];
+  for (const index of PLAYER_SIDES[player]) {
     if (!canSelectCell(state, index)) continue;
-    for (const direction of [-1, 1]) {
-      const before = scoreTotal(state.scores[COMPUTER_PLAYER]);
-      const trace = buildMoveTrace(state, index, direction);
-      if (!trace.ok) continue;
-      const captureScore = scoreBeforeEndSweep(trace, COMPUTER_PLAYER);
-      const opponentAfter = scoreBeforeEndSweep(trace, HUMAN_PLAYER);
-      const remainingOnComputerSide = PLAYER_SIDES[COMPUTER_PLAYER].reduce(
-        (sum, cellIndex) => sum + trace.state.cells[cellIndex].citizens,
-        0,
-      );
-      const captureDelta = captureScore - before;
-      const captureCount = countCaptureFrames(trace);
-      options.push({
-        direction,
-        index,
-        endsGame: trace.state.winner !== null,
-        score: captureDelta * 100 + captureCount * 8 + remainingOnComputerSide - opponentAfter * 0.05,
-      });
+    for (const dir of [-1, 1]) {
+      moves.push({ index, direction: dir });
+    }
+  }
+  return moves;
+}
+
+/**
+ * Heuristic evaluation from COMPUTER_PLAYER's perspective.
+ * Positive = good for computer, negative = bad.
+ */
+function evaluate(state) {
+  if (state.winner !== null) {
+    if (state.winner === COMPUTER_PLAYER) return 100000;
+    if (state.winner === HUMAN_PLAYER) return -100000;
+    return 0; // draw
+  }
+
+  const compScore = scoreTotal(state.scores[COMPUTER_PLAYER]);
+  const humanScore = scoreTotal(state.scores[HUMAN_PLAYER]);
+  let value = (compScore - humanScore) * 10;
+
+  // Bonus for having more stones on board (mobility)
+  const compMobility = PLAYER_SIDES[COMPUTER_PLAYER].reduce(
+    (s, i) => s + state.cells[i].citizens, 0,
+  );
+  const humanMobility = PLAYER_SIDES[HUMAN_PLAYER].reduce(
+    (s, i) => s + state.cells[i].citizens, 0,
+  );
+  value += (compMobility - humanMobility) * 0.5;
+
+  // Reward controlling cells adjacent to mandarins (capture threat)
+  const quan = [0, 6];
+  for (const q of quan) {
+    if (state.cells[q].mandarins === 0) continue;
+    // neighbours in both directions
+    const neighbours = [
+      (q + 1 + 12) % 12,
+      (q - 1 + 12) % 12,
+      (q + 2 + 12) % 12,
+      (q - 2 + 12) % 12,
+    ];
+    for (const n of neighbours) {
+      const cell = state.cells[n];
+      if (PLAYER_SIDES[COMPUTER_PLAYER].includes(n) && cell.citizens > 0) {
+        value += 2; // computer threatens the mandarin
+      }
+      if (PLAYER_SIDES[HUMAN_PLAYER].includes(n) && cell.citizens > 0) {
+        value -= 2; // human threatens the mandarin
+      }
     }
   }
 
-  if (options.length === 0) return null;
-  const nonEndingOptions = options.filter((option) => !option.endsGame);
-  const pool = nonEndingOptions.length > 0 ? nonEndingOptions : options;
-  pool.sort((a, b) => b.score - a.score || a.index - b.index || b.direction - a.direction);
-  return pool[0];
+  // Penalise seeding (giving back pieces to opponent)
+  if (sideHasNoCitizens(state, COMPUTER_PLAYER)) value -= 8;
+  if (sideHasNoCitizens(state, HUMAN_PLAYER)) value += 8;
+
+  return value;
+}
+
+/**
+ * Minimax with Alpha-Beta pruning.
+ * Returns the heuristic value for the position from COMPUTER_PLAYER's view.
+ */
+function minimax(state, depth, alpha, beta, maximising) {
+  if (state.winner !== null || depth === 0) {
+    return evaluate(state);
+  }
+
+  const currentPlayer = maximising ? COMPUTER_PLAYER : HUMAN_PLAYER;
+  const moves = getLegalMoves(state, currentPlayer);
+
+  if (moves.length === 0) {
+    // No moves: the other side collects remaining (game effectively ends)
+    return evaluate(state);
+  }
+
+  if (maximising) {
+    let best = -Infinity;
+    for (const move of moves) {
+      const trace = buildMoveTrace(state, move.index, move.direction);
+      if (!trace.ok) continue;
+      const val = minimax(trace.state, depth - 1, alpha, beta, false);
+      if (val > best) best = val;
+      if (best > alpha) alpha = best;
+      if (beta <= alpha) break; // β-cutoff
+    }
+    return best === -Infinity ? evaluate(state) : best;
+  } else {
+    let best = Infinity;
+    for (const move of moves) {
+      const trace = buildMoveTrace(state, move.index, move.direction);
+      if (!trace.ok) continue;
+      const val = minimax(trace.state, depth - 1, alpha, beta, true);
+      if (val < best) best = val;
+      if (best < beta) beta = best;
+      if (beta <= alpha) break; // α-cutoff
+    }
+    return best === Infinity ? evaluate(state) : best;
+  }
+}
+
+// ─── Public AI entry point ──────────────────────────────────────────────────
+
+/**
+ * difficulty: 'easy' | 'medium' | 'hard'
+ *   easy   – original 1-ply greedy (unchanged behaviour)
+ *   medium – minimax depth 3
+ *   hard   – minimax depth 5
+ */
+export function chooseComputerMove(state, difficulty = 'easy') {
+  if (state.winner !== null || state.currentPlayer !== COMPUTER_PLAYER) return null;
+
+  // ── Easy: original greedy 1-ply ─────────────────────────────────────────
+  if (difficulty === 'easy') {
+    const options = [];
+    for (const index of PLAYER_SIDES[COMPUTER_PLAYER]) {
+      if (!canSelectCell(state, index)) continue;
+      for (const dir of [-1, 1]) {
+        const before = scoreTotal(state.scores[COMPUTER_PLAYER]);
+        const trace = buildMoveTrace(state, index, dir);
+        if (!trace.ok) continue;
+        const captureScore = scoreBeforeEndSweep(trace, COMPUTER_PLAYER);
+        const opponentAfter = scoreBeforeEndSweep(trace, HUMAN_PLAYER);
+        const remaining = PLAYER_SIDES[COMPUTER_PLAYER].reduce(
+          (s, ci) => s + trace.state.cells[ci].citizens, 0,
+        );
+        const captureDelta = captureScore - before;
+        const captureCount = countCaptureFrames(trace);
+        options.push({
+          index,
+          direction: dir,
+          endsGame: trace.state.winner !== null,
+          score: captureDelta * 100 + captureCount * 8 + remaining - opponentAfter * 0.05,
+        });
+      }
+    }
+    if (options.length === 0) return null;
+    const nonEnding = options.filter((o) => !o.endsGame);
+    const pool = nonEnding.length > 0 ? nonEnding : options;
+    pool.sort((a, b) => b.score - a.score || a.index - b.index || b.direction - a.direction);
+    return pool[0];
+  }
+
+  // ── Medium / Hard: minimax with Alpha-Beta ───────────────────────────────
+  const depth = difficulty === 'hard' ? 5 : 3;
+
+  let bestMove = null;
+  let bestVal = -Infinity;
+  const moves = getLegalMoves(state, COMPUTER_PLAYER);
+
+  for (const move of moves) {
+    const trace = buildMoveTrace(state, move.index, move.direction);
+    if (!trace.ok) continue;
+
+    // After the computer moves it's the human's turn (minimising)
+    const val = minimax(trace.state, depth - 1, -Infinity, Infinity, false);
+
+    // Tie-break: prefer moves that also score well greedily (immediate capture)
+    const immediateDelta = scoreBeforeEndSweep(trace, COMPUTER_PLAYER)
+      - scoreTotal(state.scores[COMPUTER_PLAYER]);
+    const tieBreaker = immediateDelta * 0.01;
+
+    if (val + tieBreaker > bestVal) {
+      bestVal = val + tieBreaker;
+      bestMove = move;
+    }
+  }
+
+  return bestMove;
 }
